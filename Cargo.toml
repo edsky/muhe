@@ -1,0 +1,13 @@
+[package]
+name = "muhe"
+version = "0.1.0"
+authors = ["Changping Yu <dead.ash@hotmail.com>"]
+edition = "2018"
+
+[dependencies]
+error-chain = "0.12"
+memmap2 = "0.1"
+goblin = "0.2"
+unicorn = { git = "https://github.com/edsky/unicorn-rs-1" }
+byte-slice-cast = "0.3.5"
+lazy_static = "1.4.0"
