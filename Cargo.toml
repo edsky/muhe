@@ -11,3 +11,4 @@ goblin = "0.2"
 unicorn = { git = "https://github.com/edsky/unicorn-rs-1" }
 byte-slice-cast = "0.3.5"
 lazy_static = "1.4.0"
+bimap = "0.5.2"

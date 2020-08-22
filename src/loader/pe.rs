@@ -1,10 +1,13 @@
+#![allow(non_snake_case)]
+
 use unicorn::{Protection, CpuX86, RegisterX86, Cpu};
 use goblin::pe::PE;
-use crate::heap::uc_alloc;
+use crate::heap::Heap;
 use crate::utils::{as_u8_slice, load_file};
 use std::path::Path;
 use std::cmp::{min, max};
 use std::collections::HashMap;
+use bimap::BiMap;
 use byte_slice_cast::AsByteSlice;
 use std::error::Error;
 use std::cell::{Cell, RefCell};
@@ -15,12 +18,13 @@ use std::borrow::Borrow;
 
 pub struct PeLoader<'a> {
     emu: Box<CpuX86<'a>>,               // unicorn
+    heap: Box<Heap>,                    // heap
     fs_last_addr: u64,                  // fs 结构最后地址
     pub entry_point: u64,               // oep
     ldr_data_map: PebLoaderData32Map,   // peb
     ldr_list: RefCell<Vec<PebLdrTableEntry32Map>>,// peb table
     dll_last_addr: Cell<u64>,           // dll module last address
-    dll_mmap: RefCell<HashMap<String,u32>>,// dll映射表, 名称 <-> 基地址
+    dll_mmap: RefCell<BiMap<String, u32>>,// dll映射表, 名称 <-> 基地址
     dll_imports: RefCell<HashMap<String, HashMap<String, u32>>>,   // 导入表, 名称 <-> [函数名 <-> 地址]
 }
 
@@ -28,8 +32,8 @@ impl<'a> PeLoader<'a>
 {
     pub fn new(file: &str) -> Result<PeLoader, Box<dyn Error>> {
         let emu = Box::new(CpuX86::new(unicorn::Mode::MODE_32)?);
+        let heap = Box::new(Heap::new(0x5000000, 0x5000000 + 0x5000000));
         // alloc
-        emu.mem_map(0x5000000, 0x20000, Protection::READ | Protection::WRITE)?;
         let image_address = 0x400000 as u64;
         // 堆栈
         let stack_address = 0xfffdd000;
@@ -51,7 +55,8 @@ impl<'a> PeLoader<'a>
         // - init peb
         let peb_addr = fs_last_addr;
         fs_last_addr += ProcessEnvironmentBlock32::size();
-        let process_heap = uc_alloc(&emu, 0x100)?;
+
+        let process_heap = { PeLoader::uc_alloc(emu.borrow(), heap.borrow(), &0x100) };
         let peb_data = ProcessEnvironmentBlock32::new(fs_last_addr, process_heap as u32);
         emu.mem_write(peb_addr as u64, as_u8_slice(&peb_data))?;
         // - init ldr_data
@@ -68,10 +73,11 @@ impl<'a> PeLoader<'a>
         // 初始化
         let loader = PeLoader {
             emu,
+            heap,
             fs_last_addr,
             entry_point,
             dll_last_addr: Cell::new(0x10000000),
-            dll_mmap: RefCell::new(HashMap::new()),
+            dll_mmap: RefCell::new(BiMap::new()),
             ldr_data_map,
             ldr_list: RefCell::new(vec![]),
             dll_imports: RefCell::new(HashMap::new())
@@ -106,18 +112,19 @@ impl<'a> PeLoader<'a>
     }
 
     /* 加载dll */
-    pub fn load_dll(&self, dll_name: &str) -> Result<(), Box<dyn Error>>
+    pub fn load_dll(&self, dll_name: &str) -> Result<u32, Box<dyn Error>>
     {
         let mut path = format!("{}/{}", SYSTEM_PATH, dll_name);
         // TODO: 优化 dll 查找
         if !is_file_library(dll_name) {
             path += ".dll";
         }
+        let dll_name = &dll_name.to_string();
         // 判断是否已加载
         {
             let dlls = self.dll_mmap.borrow();
-            if dlls.contains_key(dll_name) {
-                return Ok(());
+            if dlls.contains_left(dll_name) {
+                return Ok(*dlls.get_by_left(dll_name).unwrap());
             }
         }
         let base_addr = self.get_dll_of_last_addr();
@@ -144,15 +151,59 @@ impl<'a> PeLoader<'a>
             let dll_name = import.to_lowercase();
 
             if dll_name.starts_with("api-") {
-
+                // println!("[-] dll load ignore {}", dll_name);
             } else {
                 self.load_dll(&dll_name)?;
             }
         }
 
         // run Dll main
-        Ok(())
+        Ok(base_addr)
     }
+
+    pub fn ntdll_LoadLibrary(&self, module: &str) -> u32 {
+        if let Ok(m) = self.load_dll(module) {
+            m
+        } else {
+            0
+        }
+    }
+
+    pub fn ntdll_GetProcAddress(&self, module: u32, proc_name: &str) -> u32 {
+        let name = {
+            if let Some(name) = self.dll_mmap.borrow().get_by_right(&module) {
+                Some(name.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(dll_name) = name {
+            let imports = self.dll_imports.borrow();
+            *imports.get(&dll_name).unwrap().get(proc_name).unwrap_or(&(0 as u32))
+        } else {
+            0
+        }
+    }
+
+    #[inline]
+    fn uc_alloc(emu: &CpuX86, heap: &Heap, size: &u32) -> u32 {
+        let (a, b) = heap.alloc(size);
+        if let Some((addr, size)) = b {
+            emu.mem_map(addr as u64, size as usize, Protection::WRITE | Protection::READ);
+        };
+        a
+    }
+    
+    pub fn malloc(&self, size: u32) -> u32 {
+        PeLoader::uc_alloc(self.emu.borrow(), self.heap.borrow(), &size)
+    }
+
+    pub fn free(&self, addr: u32) {
+        self.heap.free(addr);
+    }
+
+    pub fn vm(&self) -> &CpuX86<'a> { self.emu.borrow() }
 }
 
 const FS_SEGMENT_ADDR: u32 = 0x6000;
@@ -207,7 +258,7 @@ impl<'a> PeLoader<'a>
 
         let mut next_image_address = 0;
         let image_address = to;
-        let emu = &self.emu;
+        let emu = self.vm();
 
         emu.mem_map(image_address as u64, alignment as usize, Protection::READ)?;
         emu.mem_write(image_address as u64, &data[..header_size])?;
@@ -253,13 +304,13 @@ impl<'a> PeLoader<'a>
     fn add_ldr_data_table_entry(&self, dll_name: &str) -> Result<(), Box<dyn Error>>{
         let dll_base = {
             let dlls = self.dll_mmap.borrow();
-            *dlls.get(dll_name).unwrap()
+            *dlls.get_by_left(&dll_name.to_owned()).unwrap()
         };
-        let emu = self.emu.borrow();
+        let emu = self.vm();
 
         let path = format!("{}/{}", SYSTEM_PATH, dll_name);
         let ldr_table_entry_size = PebLdrTableEntry32::size();
-        let base = uc_alloc(emu, ldr_table_entry_size as u64)?;
+        let base = self.malloc(ldr_table_entry_size);
         let mut ldr_table_entry = PebLdrTableEntry32Map{ data: PebLdrTableEntry32::new(dll_base, self.alloc_string(&path)?, self.alloc_string(&dll_name)?), base: base as u32 };
 
         let ldr = &self.ldr_data_map;
@@ -311,9 +362,9 @@ impl<'a> PeLoader<'a>
         let mut string:Vec<u16> = string.encode_utf16().collect();
         string.push(0);
         let string = string.as_byte_slice();
-        let emu = self.emu.borrow();
-        let addr = uc_alloc(emu, string.len() as u64)?;
-        emu.mem_write(addr, &string)?;
+        let emu = self.vm();
+        let addr = self.malloc(string.len() as u32);
+        emu.mem_write(addr as u64, &string)?;
         Ok(WinUnicodeSting32::new((string.len() - 2) as u16, addr as u32))
     }
 }

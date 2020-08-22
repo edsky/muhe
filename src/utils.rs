@@ -23,3 +23,19 @@ pub fn load_file(path: &str) -> Result<Mmap, Box<dyn Error>>
     let file = File::open(path)?;
     Ok( unsafe { MmapOptions::new().map(&file)? } )
 }
+
+/*
+ 值向上对齐
+ */
+#[inline]
+pub fn align(value: &u32, size: &u32) -> u32
+{
+    if value % size == 0 {
+        *value
+    }
+    else if *value < 0 {
+        *size
+    } else {
+        (value / size + 1) * size
+    }
+}
