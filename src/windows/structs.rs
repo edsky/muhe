@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
 #[repr(C)]
+#[derive(Default)]
 pub(crate) struct ThreadInformationBlock32
 {
     // reference: https://en.wikipedia.org/wiki/Win32_Thread_Information_Block
@@ -57,6 +58,7 @@ pub(crate) struct ThreadInformationBlock32
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub(crate) struct ProcessEnvironmentBlock32
 {
     inherited_addr_space:                   bool, //0x000
@@ -138,7 +140,7 @@ pub(crate) struct ProcessEnvironmentBlock32
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone,Default)]
 pub(crate) struct PebLoaderData32
 {
     // Size of structure, used by ntdll.dll as structure version ID
@@ -157,7 +159,7 @@ pub(crate) struct PebLoaderData32
     shutdown_thread_id: u32, //0x2C
 }
 
-#[derive(Clone)]
+#[derive(Clone,Default)]
 pub(crate) struct PebLoaderData32Map
 {
     pub data: PebLoaderData32,
@@ -165,7 +167,7 @@ pub(crate) struct PebLoaderData32Map
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone,Default)]
 pub(crate) struct WinUnicodeSting32
 {
     length: u16,
@@ -174,7 +176,7 @@ pub(crate) struct WinUnicodeSting32
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone,Default)]
 pub(crate) struct PebLdrTableEntry32
 {
     pub in_load_order_links:           [u32;              2], //0x00
@@ -201,31 +203,11 @@ pub(crate) struct PebLdrTableEntry32Map
 impl ThreadInformationBlock32 {
     pub fn new(stack_base: u32, stack_limit: u32, self_addr: u32, peb_addr: u32) -> ThreadInformationBlock32 {
         ThreadInformationBlock32 {
-            seh_frame: 0,
             stack_base,
             stack_limit,
-            subsystem_tib: 0,
-            fiber_data: 0,
-            arbitrary_data: 0,
             self_addr,
-            environment_ptr: 0,
-            process_id: 0,
-            thread_id: 0,
-            active_rpc_handle: 0,
-            tls_addr: 0,
             peb_addr,
-            last_error: 0,
-            critical_section_count: 0,
-            csr_client_thread: 0,
-            win32_thread_info: 0,
-            win32_client_info: [0; 31],
-            fastsyscall: 0,
-            current_locale: 0,
-            fp_software_status_reg: 0,
-            reserved: [0; 27],
-            exception_code: 0,
-            activation_context_stack: [0; 20],
-            spare_bytes: [0; 24]
+            ..ThreadInformationBlock32::default()
         }
     }
 
@@ -237,82 +219,10 @@ impl ThreadInformationBlock32 {
 impl ProcessEnvironmentBlock32 {
     pub fn new(peb_ldr_data: u32, process_heap: u32) -> ProcessEnvironmentBlock32 {
         ProcessEnvironmentBlock32 {
-            inherited_addr_space: false,
-            read_image_fileexec_options: false,
-            being_debugged: false,
-            bit_field: 0,
-            mutant: 0,
-            image_base_address: 0,
             peb_ldr_data,
-            process_parameters: 0,
-            sub_system_data: 0,
             process_heap,
-            fast_peb_lock: 0,
-            atl_thunk_s_list_ptr: 0,
-            ifeo_key: 0,
-            cross_process_flags: 0,
-            kernel_callback_table: 0,
-            system_reserved: 0,
-            atl_thunk_slist_ptr32: 0,
-            api_set_map: 0,
-            tls_expansion_counter: 0,
-            tls_bitmap: 0,
-            tls_bitmap_bits: [0; 2],
-            read_only_shared_memory_base: 0,
-            hotpatch_information: 0,
-            read_only_static_server_data: 0,
-            ansi_code_page_data: 0,
-            oem_code_page_data: 0,
-            unicode_case_table_data: 0,
             number_of_processors: 1,
-            nt_global_flag: 0,
-            critical_section_timeout: 0,
-            heap_segment_reserve: 0,
-            heap_segment_commit: 0,
-            heap_de_commit_total_free_threshold: 0,
-            heap_de_commit_free_block_threshold: 0,
-            number_of_heaps: 0,
-            maximum_number_of_heaps: 0,
-            process_heaps: 0,
-            gdi_shared_handle_table: 0,
-            process_starter_helper: 0,
-            gdi_d_c_attribute_list: 0,
-            loader_lock: 0,
-            os_major_version: 0,
-            os_minor_version: 0,
-            os_build_number: 0,
-            os_csd_version: 0,
-            os_platform_id: 0,
-            image_subsystem: 0,
-            image_subsystem_major_version: 0,
-            image_subsystem_minor_version: 0,
-            active_process_affinity_mask: 0,
-            gdi_handle_buffer: [0; 17],
-            gdi_handle_buffer1: [0; 17],
-            post_process_init_routine: 0,
-            tls_expansion_bitmap: 0,
-            tls_expansion_bitmap_bits: [0; 32],
-            session_id: 0,
-            app_compat_flags: 0,
-            app_compat_flags_user: 0,
-            pshim_data: 0,
-            app_compat_info: 0,
-            csd_version: [0; 8],
-            activation_context_data: 0,
-            process_assembly_storage_map: 0,
-            system_default_activation_context_data: 0,
-            system_assembly_storage_map: 0,
-            minimum_stack_commit: 0,
-            fls_callback: 0,
-            fls_list_head: 0,
-            fls_bitmap: 0,
-            fls_bitmap_bits: [0; 4],
-            fls_high_index: 0,
-            wer_registration_data: 0,
-            wer_ship_assert_ptr: 0,
-            pcontext_data: 0,
-            pimage_header_hash: 0,
-            tracing_flags: 0
+            ..ProcessEnvironmentBlock32::default()
         }
     }
 
@@ -324,15 +234,10 @@ impl ProcessEnvironmentBlock32 {
 impl PebLoaderData32 {
     pub fn new(base_addr: u32) -> PebLoaderData32 {
         PebLoaderData32 {
-            length: 0,
-            initialized: [0; 4],
-            ss_handle: 0,
             in_load_order_module_list: [base_addr + 2 * 4; 2],
             in_memory_order_module_list: [base_addr + 4 * 4; 2],
             in_initialization_order_module_list: [base_addr + 6 * 4; 2],
-            entry_in_progress: 0,
-            shutdown_in_progress: 0,
-            shutdown_thread_id: 0
+            ..PebLoaderData32::default()
         }
     }
 
@@ -354,18 +259,10 @@ impl WinUnicodeSting32 {
 impl PebLdrTableEntry32 {
     pub fn new(dll_base: u32, full_dll_name: WinUnicodeSting32, base_dll_name: WinUnicodeSting32) -> PebLdrTableEntry32 {
         PebLdrTableEntry32 {
-            in_load_order_links: [0; 2],
-            in_memory_order_links: [0; 2],
-            in_initialization_order_links: [0; 2],
             dll_base,
-            entry_point: 0,
-            size_of_image: 0,
             full_dll_name,
             base_dll_name,
-            flags: 0,
-            load_count: 0,
-            tls_index: 0,
-            hash_links: [0; 2]
+            ..PebLdrTableEntry32::default()
         }
     }
 
