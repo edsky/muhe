@@ -16,6 +16,10 @@ use crate::windows::structs::{PebLoaderData32Map, ThreadInformationBlock32, Proc
 use crate::windows::structs::{PebLoaderData32, WinUnicodeSting32, PebLdrTableEntry32, PebLdrTableEntry32Map};
 use std::borrow::Borrow;
 
+const FS_SEGMENT_ADDR: u32 = 0x6000;
+const FS_SEGMENT_SIZE: u32 = 0x6000;
+const SYSTEM_PATH: &str = "./files/rootfs/Windows/System32/";
+
 pub struct PeLoader<'a> {
     emu: Box<CpuX86<'a>>,               // unicorn
     heap: Box<Heap>,                    // heap
@@ -205,10 +209,6 @@ impl<'a> PeLoader<'a>
 
     pub fn vm(&self) -> &CpuX86<'a> { self.emu.borrow() }
 }
-
-const FS_SEGMENT_ADDR: u32 = 0x6000;
-const FS_SEGMENT_SIZE: u32 = 0x6000;
-const SYSTEM_PATH: &str = "./files/rootfs/Windows/System32/";
 
 // TODO: 可以优化为移位操作
 fn get_protection(flag: u32) -> Protection
