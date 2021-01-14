@@ -308,7 +308,7 @@ impl<'a> PeLoader<'a>
         };
         let emu = self.vm();
 
-        let path = format!("{}/{}", SYSTEM_PATH, dll_name);
+        let path = format!("{}{}", SYSTEM_PATH, dll_name);
         let ldr_table_entry_size = PebLdrTableEntry32::size();
         let base = self.malloc(ldr_table_entry_size);
         let mut ldr_table_entry = PebLdrTableEntry32Map{ data: PebLdrTableEntry32::new(dll_base, self.alloc_string(&path)?, self.alloc_string(&dll_name)?), base: base as u32 };
