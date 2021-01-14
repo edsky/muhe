@@ -15,9 +15,12 @@ use goblin::pe::section_table::{IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_S
 use crate::windows::structs::{PebLoaderData32Map, ThreadInformationBlock32, ProcessEnvironmentBlock32};
 use crate::windows::structs::{PebLoaderData32, WinUnicodeSting32, PebLdrTableEntry32, PebLdrTableEntry32Map};
 use std::borrow::Borrow;
+use crate::windows::segmentation::SegmentDescriptor;
+use crate::windows::segmentation::Ring::Ring3;
 
 const FS_SEGMENT_ADDR: u32 = 0x6000;
 const FS_SEGMENT_SIZE: u32 = 0x6000;
+const GDT_ADDRESS: u64 = 0xc0000000;
 const SYSTEM_PATH: &str = "./files/rootfs/Windows/System32/";
 
 pub struct PeLoader<'a> {
@@ -30,6 +33,16 @@ pub struct PeLoader<'a> {
     dll_last_addr: Cell<u64>,           // dll module last address
     dll_mmap: RefCell<BiMap<String, u32>>,// dll映射表, 名称 <-> 基地址
     dll_imports: RefCell<HashMap<String, HashMap<String, u32>>>,   // 导入表, 名称 <-> [函数名 <-> 地址]
+}
+
+#[repr(C)]
+#[derive(Default,Debug)]
+struct X86Mmr
+{
+    selector:   u16,    /* not used by GDTR and IDTR */
+    base:       u64,    /* handle 32 or 64 bit CPUs */
+    limit:      u32,
+    flags:      u32,    /* not used by GDTR and IDTR */
 }
 
 impl<'a> PeLoader<'a>
@@ -111,6 +124,8 @@ impl<'a> PeLoader<'a>
                 }
             }
         }
+        /// init segmentation
+        loader.init_gdtr(FS_SEGMENT_ADDR);
 
         Ok(loader)
     }
@@ -208,6 +223,46 @@ impl<'a> PeLoader<'a>
     }
 
     pub fn vm(&self) -> &CpuX86<'a> { self.emu.borrow() }
+
+    #[inline]
+    fn init_descriptor(desc: &mut SegmentDescriptor, base: u32, limit: u32, is_code: bool) {
+        let _type = if is_code { 0xb } else { 3 };
+        desc.set_base_limit(base, limit);
+
+        /// defaults
+        desc.set_dpl(Ring3);
+        desc.set_p();
+        desc.set_db();  /// 32 bit
+        desc.set_type(_type);
+        desc.set_s();
+    }
+
+    fn init_gdtr(&self, fs_address: u32) -> Result<(), Box<dyn Error>> {
+        let (r_cs, r_ss, r_ds, r_es, r_fs) = (0x73, 0x88, 0x7b, 0x7b, 0x83);
+        let mut gdt = [SegmentDescriptor::default(); 31];
+        let gdtr: X86Mmr = X86Mmr {
+            base: GDT_ADDRESS,
+            limit: (31 * ::std::mem::size_of::<SegmentDescriptor>() - 1) as u32,
+            ..X86Mmr::default()
+        };
+
+        Self::init_descriptor(&mut gdt[14], 0, 0xfffff000, true);             // code segment
+        Self::init_descriptor(&mut gdt[15], 0, 0xfffff000, false);            // data segment
+        Self::init_descriptor(&mut gdt[16], fs_address, 0xfff, false);   // one page data segment simulate fs
+        Self::init_descriptor(&mut gdt[17], 0, 0xfffff000, false);            // ring 0 data
+
+        self.emu.mem_map(GDT_ADDRESS, 0x10000, Protection::WRITE | Protection::READ)?;
+        unsafe { self.emu.reg_write_generic(RegisterX86::GDTR, gdtr)?; }
+        self.emu.mem_write(GDT_ADDRESS, as_u8_slice(&gdt))?;
+
+        self.emu.reg_write_i32(RegisterX86::SS, r_ss);
+        self.emu.reg_write_i32(RegisterX86::CS, r_cs);
+        self.emu.reg_write_i32(RegisterX86::DS, r_ds);
+        self.emu.reg_write_i32(RegisterX86::ES, r_es);
+        self.emu.reg_write_i32(RegisterX86::FS, r_fs);
+
+        Ok(())
+    }
 }
 
 // TODO: 可以优化为移位操作
