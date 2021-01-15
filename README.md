@@ -6,6 +6,9 @@ Simulate loading and running programs.
 - [x] Implement gdtr entry
 - [ ] Implement tls initialization
 - [ ] Implement easy api hook
+- [ ] Implement dll reloc
+- [ ] Implement the test framework
+- [ ] Implement the debugger
 
 ### Installation
 
