@@ -109,21 +109,13 @@ impl<'a> PeLoader<'a>
         // add ntdll to ldr_data_table
         loader.load_dll("ntdll.dll")?;
         // import dll
-        for lib in pe.libraries {
+        for lib in &pe.libraries {
             let dll_name = lib.to_lowercase();
             loader.load_dll(&dll_name)?;
         }
-        {
-            let imports = loader.dll_imports.borrow();
-            for import in pe.imports {
-                if let Some(addr) = imports.get(&import.dll.to_lowercase()).unwrap().get(&*import.name) {
-                    loader.emu.mem_write(image_address + import.offset as u64, as_u8_slice(addr))?;
-                } else {
-                    println!("[-] Not found {} ===> {:x}", import.name, import.offset);
-                }
-            }
-        }
-        /// init segmentation
+        // fix import table
+        loader.fix_import_table(image_address, &pe);
+        // init segmentation
         loader.init_gdtr(FS_SEGMENT_ADDR);
 
         Ok(loader)
@@ -155,7 +147,7 @@ impl<'a> PeLoader<'a>
         {
             let mut imports = self.dll_imports.borrow_mut();
             let mut exports:HashMap<String, u32> = HashMap::new();
-            for export in pe.exports {
+            for export in &pe.exports {
                 if let Some(name) = export.name {
                     exports.insert(name.to_owned(), base_addr + export.rva as u32);
                 }
@@ -164,8 +156,8 @@ impl<'a> PeLoader<'a>
         }
         self.insert_to_dlls(dll_name, base_addr)?;
 
-        // 解析导入
-        for import in pe.libraries {
+        // Resolve imported modules
+        for import in &pe.libraries {
             let dll_name = import.to_lowercase();
 
             if dll_name.starts_with("api-") {
@@ -175,8 +167,42 @@ impl<'a> PeLoader<'a>
             }
         }
 
+        // fix import table
+        self.fix_import_table(base_addr as u64, &pe);
+
+        // TODO: fix the relocation table
+
         // run Dll main
         Ok(base_addr)
+    }
+
+    fn fix_import_table(&self, base_addr: u64, pe: &PE) -> Result<(), Box<dyn Error>>
+    {
+        let imports = self.dll_imports.borrow();
+        for import in &pe.imports {
+            let target_addr = base_addr + import.offset as u64;
+            let target_dll = &import.dll.to_lowercase();
+            if let Some(m) = imports.get(target_dll) {
+                if let Some(addr) = m.get(&*import.name) {
+                    self.emu.mem_write(target_addr, as_u8_slice(addr))?;
+                } else {
+                    // println!("[-] Not found {} on {} ===> {:08x}", import.name, import.dll.to_lowercase(), target_addr);
+                }
+            } else {
+                // Import replacement api
+                if target_dll.starts_with("api-") {
+                    for (_, v) in imports.iter() {
+                        if let Some(addr) = v.get(&*import.name) {
+                            self.emu.mem_write(target_addr, as_u8_slice(addr))?;
+                            break;
+                        }
+                    }
+                }
+                // println!("[-] Not found module {} for {} ===> {:08x}", import.dll.to_lowercase(), import.name, target_addr);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn ntdll_LoadLibrary(&self, module: &str) -> u32 {
