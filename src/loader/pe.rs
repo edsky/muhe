@@ -15,8 +15,7 @@ use goblin::pe::section_table::{IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_S
 use crate::windows::structs::{PebLoaderData32Map, ThreadInformationBlock32, ProcessEnvironmentBlock32};
 use crate::windows::structs::{PebLoaderData32, WinUnicodeSting32, PebLdrTableEntry32, PebLdrTableEntry32Map};
 use std::borrow::Borrow;
-use crate::windows::segmentation::SegmentDescriptor;
-use crate::windows::segmentation::Ring::Ring3;
+use crate::windows::segmentation::{SegmentDescriptor, Ring};
 
 const FS_SEGMENT_ADDR: u32 = 0x6000;
 const FS_SEGMENT_SIZE: u32 = 0x6000;
@@ -225,12 +224,14 @@ impl<'a> PeLoader<'a>
     pub fn vm(&self) -> &CpuX86<'a> { self.emu.borrow() }
 
     #[inline]
-    fn init_descriptor(desc: &mut SegmentDescriptor, base: u32, limit: u32, is_code: bool) {
+    fn init_descriptor(desc: &mut SegmentDescriptor, base: u32, limit: u32, is_code: bool, ring: Ring) {
         let _type = if is_code { 0xb } else { 3 };
+        let mut limit = limit;
+        if limit> 0xfffff { desc.set_g(); limit >>= 12 }
         desc.set_base_limit(base, limit);
 
         /// defaults
-        desc.set_dpl(Ring3);
+        desc.set_dpl(ring);
         desc.set_p();
         desc.set_db();  /// 32 bit
         desc.set_type(_type);
@@ -246,10 +247,10 @@ impl<'a> PeLoader<'a>
             ..X86Mmr::default()
         };
 
-        Self::init_descriptor(&mut gdt[14], 0, 0xfffff000, true);             // code segment
-        Self::init_descriptor(&mut gdt[15], 0, 0xfffff000, false);            // data segment
-        Self::init_descriptor(&mut gdt[16], fs_address, 0xfff, false);   // one page data segment simulate fs
-        Self::init_descriptor(&mut gdt[17], 0, 0xfffff000, false);            // ring 0 data
+        Self::init_descriptor(&mut gdt[14], 0, 0xfffff000, true, Ring::Ring3);             // code segment
+        Self::init_descriptor(&mut gdt[15], 0, 0xfffff000, false, Ring::Ring3);            // data segment
+        Self::init_descriptor(&mut gdt[16], fs_address, 0xfff, false, Ring::Ring3);        // one page data segment simulate fs
+        Self::init_descriptor(&mut gdt[17], 0, 0xfffff000, false, Ring::Ring0);            // ring 0 data
 
         self.emu.mem_map(GDT_ADDRESS, 0x10000, Protection::WRITE | Protection::READ)?;
         unsafe { self.emu.reg_write_generic(RegisterX86::GDTR, gdtr)?; }
