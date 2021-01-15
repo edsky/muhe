@@ -124,7 +124,7 @@ impl<'a> PeLoader<'a>
     /* 加载dll */
     pub fn load_dll(&self, dll_name: &str) -> Result<u32, Box<dyn Error>>
     {
-        let mut path = format!("{}/{}", SYSTEM_PATH, dll_name);
+        let mut path = format!("{}{}", SYSTEM_PATH, dll_name);
         // TODO: 优化 dll 查找
         if !is_file_library(dll_name) {
             path += ".dll";
