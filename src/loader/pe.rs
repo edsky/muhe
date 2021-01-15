@@ -25,6 +25,7 @@ const SYSTEM_PATH: &str = "./files/rootfs/Windows/System32/";
 pub struct PeLoader<'a> {
     emu: Box<CpuX86<'a>>,               // unicorn
     heap: Box<Heap>,                    // heap
+    #[allow(dead_code)]
     fs_last_addr: u64,                  // fs 结构最后地址
     pub entry_point: u64,               // oep
     ldr_data_map: PebLoaderData32Map,   // peb
@@ -114,9 +115,9 @@ impl<'a> PeLoader<'a>
             loader.load_dll(&dll_name)?;
         }
         // fix import table
-        loader.fix_import_table(image_address, &pe);
+        loader.fix_import_table(image_address, &pe)?;
         // init segmentation
-        loader.init_gdtr(FS_SEGMENT_ADDR);
+        loader.init_gdtr(FS_SEGMENT_ADDR)?;
 
         Ok(loader)
     }
@@ -168,9 +169,7 @@ impl<'a> PeLoader<'a>
         }
 
         // fix import table
-        self.fix_import_table(base_addr as u64, &pe);
-
-        // TODO: fix the relocation table
+        self.fix_import_table(base_addr as u64, &pe)?;
 
         // run Dll main
         Ok(base_addr)
@@ -234,9 +233,14 @@ impl<'a> PeLoader<'a>
     fn uc_alloc(emu: &CpuX86, heap: &Heap, size: &u32) -> u32 {
         let (a, b) = heap.alloc(size);
         if let Some((addr, size)) = b {
-            emu.mem_map(addr as u64, size as usize, Protection::WRITE | Protection::READ);
-        };
-        a
+            if (emu.mem_map(addr as u64, size as usize, Protection::WRITE | Protection::READ)).is_ok() {
+                a
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     }
     
     pub fn malloc(&self, size: u32) -> u32 {
@@ -256,10 +260,10 @@ impl<'a> PeLoader<'a>
         if limit> 0xfffff { desc.set_g(); limit >>= 12 }
         desc.set_base_limit(base, limit);
 
-        /// defaults
+        // defaults
         desc.set_dpl(ring);
         desc.set_p();
-        desc.set_db();  /// 32 bit
+        desc.set_db();  // 32 bit
         desc.set_type(_type);
         desc.set_s();
     }
@@ -282,11 +286,11 @@ impl<'a> PeLoader<'a>
         unsafe { self.emu.reg_write_generic(RegisterX86::GDTR, gdtr)?; }
         self.emu.mem_write(GDT_ADDRESS, as_u8_slice(&gdt))?;
 
-        self.emu.reg_write_i32(RegisterX86::SS, r_ss);
-        self.emu.reg_write_i32(RegisterX86::CS, r_cs);
-        self.emu.reg_write_i32(RegisterX86::DS, r_ds);
-        self.emu.reg_write_i32(RegisterX86::ES, r_es);
-        self.emu.reg_write_i32(RegisterX86::FS, r_fs);
+        self.emu.reg_write_i32(RegisterX86::SS, r_ss)?;
+        self.emu.reg_write_i32(RegisterX86::CS, r_cs)?;
+        self.emu.reg_write_i32(RegisterX86::DS, r_ds)?;
+        self.emu.reg_write_i32(RegisterX86::ES, r_es)?;
+        self.emu.reg_write_i32(RegisterX86::FS, r_fs)?;
 
         Ok(())
     }
@@ -354,6 +358,7 @@ impl<'a> PeLoader<'a>
             if section.pointer_to_raw_data > 0 {
                 emu.mem_write(start, &data[section.pointer_to_raw_data as usize..end_of_raw_data])?;
             }
+            // TODO: fix reloc table
             // last write address
             next_image_address = start as u32 + virtual_size;
         }
