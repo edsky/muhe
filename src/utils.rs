@@ -30,12 +30,12 @@ pub fn load_file(path: &str) -> Result<Mmap, Box<dyn Error>>
 #[inline]
 pub fn align(value: &u32, size: &u32) -> u32
 {
-    if value % size == 0 {
-        *value
+    let v: u32 = *value;
+    let s: u32 = *size;
+    if v % s == 0 {
+        v
     }
-    else if *value < 0 {
-        *size
-    } else {
-        (value / size + 1) * size
+    else {
+        (v / s + 1) * s
     }
 }
