@@ -41,8 +41,8 @@ impl Heap
     }
 
     // 返回地址和需要map的地址&大小
-    pub fn alloc(&self, size: &u32) -> (u32, Option<(u32, u32)>){
-        let size = align(&size, &4);
+    pub fn alloc(&self, size: u32) -> (u32, Option<(u32, u32)>){
+        let size = align(size, 4);
         // 判断大小最符合的
         if let Some(v) = self.get_first_match(size) {
             let mut chunks = self.chunks.borrow_mut();
@@ -57,7 +57,7 @@ impl Heap
             self.current_alloc.get()
         };
         if current_use + size > current_alloc {
-            let real_size = align(&size, &PAGE_SIZE);
+            let real_size = align(size, PAGE_SIZE);
             if self.start_address + current_use + real_size > self.end_address {
                 (0, None)
             } else {

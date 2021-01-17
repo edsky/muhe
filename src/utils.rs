@@ -28,14 +28,12 @@ pub fn load_file(path: &str) -> Result<Mmap, Box<dyn Error>>
  值向上对齐
  */
 #[inline]
-pub fn align(value: &u32, size: &u32) -> u32
+pub fn align(value: u32, size: u32) -> u32
 {
-    let v: u32 = *value;
-    let s: u32 = *size;
-    if v % s == 0 {
-        v
+    if value % size == 0 {
+        value.clone()
     }
     else {
-        (v / s + 1) * s
+        (value / size + 1) * size
     }
 }
