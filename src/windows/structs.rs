@@ -217,10 +217,11 @@ impl ThreadInformationBlock32 {
 }
 
 impl ProcessEnvironmentBlock32 {
-    pub fn new(peb_ldr_data: u32, process_heap: u32) -> ProcessEnvironmentBlock32 {
+    pub fn new(peb_ldr_data: u32, process_heap: u32, image_base_address: u32) -> ProcessEnvironmentBlock32 {
         ProcessEnvironmentBlock32 {
             peb_ldr_data,
             process_heap,
+            image_base_address,
             number_of_processors: 1,
             ..ProcessEnvironmentBlock32::default()
         }

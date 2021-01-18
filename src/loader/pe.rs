@@ -75,7 +75,7 @@ impl<'a> PeLoader<'a>
         fs_last_addr += ProcessEnvironmentBlock32::size();
 
         let process_heap = { PeLoader::uc_alloc(emu.borrow(), heap.borrow(), 0x100) };
-        let peb_data = ProcessEnvironmentBlock32::new(fs_last_addr, process_heap as u32);
+        let peb_data = ProcessEnvironmentBlock32::new(fs_last_addr, process_heap as u32, image_address as u32);
         emu.mem_write(peb_addr as u64, as_u8_slice(&peb_data))?;
         // - init ldr_data
         let ldr_addr = fs_last_addr;
