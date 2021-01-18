@@ -233,13 +233,14 @@ impl<'a> PeLoader<'a>
     fn uc_alloc(emu: &CpuX86, heap: &Heap, size: u32) -> u32 {
         let (a, b) = heap.alloc(size);
         if let Some((addr, size)) = b {
+            // need map
             if (emu.mem_map(addr as u64, size as usize, Protection::WRITE | Protection::READ)).is_ok() {
                 a
             } else {
                 0
             }
         } else {
-            0
+            a
         }
     }
     
