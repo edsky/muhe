@@ -73,7 +73,7 @@ impl<'a> PeLoader<'a>
         let peb_addr = fs_last_addr;
         fs_last_addr += ProcessEnvironmentBlock32::size();
 
-        let process_heap = { PeLoader::uc_alloc(emu.borrow(), heap.borrow(), &0x100) };
+        let process_heap = { PeLoader::uc_alloc(emu.borrow(), heap.borrow(), 0x100) };
         let peb_data = ProcessEnvironmentBlock32::new(fs_last_addr, process_heap as u32);
         emu.mem_write(peb_addr as u64, as_u8_slice(&peb_data))?;
         // - init ldr_data
@@ -230,7 +230,7 @@ impl<'a> PeLoader<'a>
     }
 
     #[inline]
-    fn uc_alloc(emu: &CpuX86, heap: &Heap, size: &u32) -> u32 {
+    fn uc_alloc(emu: &CpuX86, heap: &Heap, size: u32) -> u32 {
         let (a, b) = heap.alloc(size);
         if let Some((addr, size)) = b {
             if (emu.mem_map(addr as u64, size as usize, Protection::WRITE | Protection::READ)).is_ok() {
@@ -244,7 +244,7 @@ impl<'a> PeLoader<'a>
     }
     
     pub fn malloc(&self, size: u32) -> u32 {
-        PeLoader::uc_alloc(self.emu.borrow(), self.heap.borrow(), &size)
+        PeLoader::uc_alloc(self.emu.borrow(), self.heap.borrow(), size)
     }
 
     pub fn free(&self, addr: u32) {
