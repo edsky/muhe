@@ -22,6 +22,7 @@ const FS_SEGMENT_ADDR: u32 = 0x6000;
 const FS_SEGMENT_SIZE: u32 = 0x6000;
 const GDT_ADDRESS: u64 = 0xc0000000;
 const SYSTEM_PATH: &str = "./files/rootfs/Windows/System32/";
+const SYSTEM32_PATH: &str = "./files/rootfs/Windows/SysWOW64/";
 
 pub struct PeLoader<'a> {
     emu: Box<CpuX86<'a>>,               // unicorn
@@ -104,16 +105,18 @@ impl<'a> PeLoader<'a>
         for _ in &pe.exports {
             // now is none
         }
+        // load api set map
+        loader.init_api_set_schema()?;
         // 加载 pe 到内存
         loader.load_memory(&pe, data, image_address as u32)?;
         // add pe to ldr_data_table
         loader.insert_to_dlls(file, image_address as u32)?;
         // add ntdll to ldr_data_table
-        loader.load_dll("ntdll.dll")?;
+        loader.load_dll("ntdll.dll", true)?;
         // import dll
         for lib in &pe.libraries {
             let dll_name = lib.to_lowercase();
-            loader.load_dll(&dll_name)?;
+            loader.load_dll(&dll_name, true)?;
         }
         // fix import table
         loader.fix_import_table(image_address, &pe)?;
@@ -124,9 +127,13 @@ impl<'a> PeLoader<'a>
     }
 
     /* 加载dll */
-    pub fn load_dll(&self, dll_name: &str) -> Result<u32, Box<dyn Error>>
+    pub fn load_dll(&self, dll_name: &str, is_win32: bool) -> Result<u32, Box<dyn Error>>
     {
-        let mut path = format!("{}{}", SYSTEM_PATH, dll_name);
+        let mut path = if is_win32 {
+            format!("{}{}", SYSTEM32_PATH, dll_name)
+        } else {
+            format!("{}{}", SYSTEM_PATH, dll_name)
+        };
         // TODO: 优化 dll 查找
         if !is_file_library(dll_name) {
             path += ".dll";
@@ -165,7 +172,7 @@ impl<'a> PeLoader<'a>
             if dll_name.starts_with("api-") {
                 // println!("[-] dll load ignore {}", dll_name);
             } else {
-                self.load_dll(&dll_name)?;
+                self.load_dll(&dll_name, true)?;
             }
         }
 
@@ -206,7 +213,7 @@ impl<'a> PeLoader<'a>
     }
 
     pub fn ntdll_LoadLibrary(&self, module: &str) -> u32 {
-        if let Ok(m) = self.load_dll(module) {
+        if let Ok(m) = self.load_dll(module, true) {
             m
         } else {
             0
@@ -294,6 +301,26 @@ impl<'a> PeLoader<'a>
         self.emu.reg_write_i32(RegisterX86::ES, r_es)?;
         self.emu.reg_write_i32(RegisterX86::FS, r_fs)?;
 
+        Ok(())
+    }
+
+    fn init_api_set_schema(&self) -> Result<(), Box<dyn Error>> {
+        // load ApiSetSchema
+        let data = &load_file(format!("{}{}", SYSTEM_PATH, "ApiSetSchema.dll").as_str())?[..];
+        let pe = PE::parse(data)?;
+        for section in &pe.sections {
+            if let Ok(".apiset") = section.name() {
+                let end_of_raw_data = (section.pointer_to_raw_data + min(section.virtual_size, section.size_of_raw_data)) as usize;
+                self.init_api_map(&data[section.pointer_to_raw_data as usize..end_of_raw_data])?;
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn init_api_map(&self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+        // TODO: save to map
         Ok(())
     }
 }
@@ -442,7 +469,7 @@ impl<'a> PeLoader<'a>
         };
         let emu = self.vm();
 
-        let path = format!("{}{}", SYSTEM_PATH, dll_name);
+        let path = format!("{}{}", SYSTEM32_PATH, dll_name);
         let ldr_table_entry_size = PebLdrTableEntry32::size();
         let base = self.malloc(ldr_table_entry_size);
         let mut ldr_table_entry = PebLdrTableEntry32Map{ data: PebLdrTableEntry32::new(dll_base, self.alloc_string(&path)?, self.alloc_string(&dll_name)?), base: base as u32 };
