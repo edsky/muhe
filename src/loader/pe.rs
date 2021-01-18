@@ -16,7 +16,7 @@ use crate::windows::structs::{PebLoaderData32Map, ThreadInformationBlock32, Proc
 use crate::windows::structs::{PebLoaderData32, WinUnicodeSting32, PebLdrTableEntry32, PebLdrTableEntry32Map};
 use std::borrow::Borrow;
 use crate::windows::segmentation::{SegmentDescriptor, Ring};
-use scroll::{ Pread };
+use scroll::{Pread, Pwrite};
 
 const FS_SEGMENT_ADDR: u32 = 0x6000;
 const FS_SEGMENT_SIZE: u32 = 0x6000;
@@ -351,10 +351,6 @@ impl<'a> PeLoader<'a>
         emu.mem_map(image_address as u64, alignment as usize, Protection::READ)?;
         emu.mem_write(image_address as u64, &data[..header_size])?;
 
-        // TODO: Modify memory in advance to increase speed
-        // Deal with the relocation first, so that it’s faster
-        // let mut data = &data[..];
-
         for section in &pe.sections {
             let start = section.virtual_address as u64 + image_address as u64;
             let end_of_raw_data = (section.pointer_to_raw_data + min(section.virtual_size, section.size_of_raw_data)) as usize;
@@ -402,19 +398,17 @@ impl<'a> PeLoader<'a>
     #[inline]
     fn fix_reloc_addr(&self, va: u32, blocks: Vec<u16>, image_addr: u64, base: u64) -> Result<(), Box<dyn Error>> {
         let delta: i32 = image_addr as i32 - base as i32;
+        let mut buf = [0u8; 0x1000];
+        self.emu.mem_read(image_addr + va as u64, &mut buf)?;
         for block in &blocks {
             let ty = (*block & 0xf000) >> 12;
-            let real = *block & 0xfff;
+            let real: usize = (*block & 0xfff) as usize;
             if ty == 0 { continue; }
-            let rva = va + real as u32;
-
-            let old = self.emu.mem_read_as_vec(image_addr + rva as u64, 4)?;
-            let old:u32 = old.pread(0)?;
-
+            let old:u32 = buf.pread(real)?;
             let new = (old as i32 + delta) as u32;
-            self.emu.mem_write(image_addr + rva as u64, &new.to_le_bytes())?;
+            buf.pwrite(new, real )?;
         }
-
+        self.emu.mem_write(image_addr + va as u64, &buf)?;
         Ok(())
     }
 
