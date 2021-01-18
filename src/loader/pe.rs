@@ -16,6 +16,7 @@ use crate::windows::structs::{PebLoaderData32Map, ThreadInformationBlock32, Proc
 use crate::windows::structs::{PebLoaderData32, WinUnicodeSting32, PebLdrTableEntry32, PebLdrTableEntry32Map};
 use std::borrow::Borrow;
 use crate::windows::segmentation::{SegmentDescriptor, Ring};
+use scroll::{ Pread };
 
 const FS_SEGMENT_ADDR: u32 = 0x6000;
 const FS_SEGMENT_SIZE: u32 = 0x6000;
@@ -350,6 +351,10 @@ impl<'a> PeLoader<'a>
         emu.mem_map(image_address as u64, alignment as usize, Protection::READ)?;
         emu.mem_write(image_address as u64, &data[..header_size])?;
 
+        // TODO: Modify memory in advance to increase speed
+        // Deal with the relocation first, so that it’s faster
+        // let mut data = &data[..];
+
         for section in &pe.sections {
             let start = section.virtual_address as u64 + image_address as u64;
             let end_of_raw_data = (section.pointer_to_raw_data + min(section.virtual_size, section.size_of_raw_data)) as usize;
@@ -359,11 +364,58 @@ impl<'a> PeLoader<'a>
             if section.pointer_to_raw_data > 0 {
                 emu.mem_write(start, &data[section.pointer_to_raw_data as usize..end_of_raw_data])?;
             }
-            // TODO: fix reloc table
             // last write address
             next_image_address = start as u32 + virtual_size;
         }
+
+        // fix reloc table
+        if let Some(header) = pe.header.optional_header {
+            if let Some(reloc) = header.data_directories.get_base_relocation_table() {
+                if let Ok(reloc_vec) = emu.mem_read_as_vec((image_address + reloc.virtual_address) as u64, reloc.size as usize) {
+                    self.fix_reloc_table(&reloc_vec, image_address as u64, header.windows_fields.image_base)?;
+                }
+            }
+        }
         Ok(next_image_address)
+    }
+
+    #[inline]
+    fn fix_reloc_table(&self, bytes: &[u8], image_addr: u64, base: u64) -> Result<(), Box<dyn Error>> {
+        let bytes_len = bytes.len();
+        let mut col = 0;
+        loop {
+            let va = bytes.gread_with::<u32>(&mut col, scroll::LE)?;
+            let size = bytes.gread_with::<u32>(&mut col, scroll::LE)?;
+            let block_num = (size - 8) / 2;
+            let mut blocks: Vec<u16> = Vec::with_capacity(block_num as usize);
+            for _ in 0..block_num {
+                blocks.push(bytes.gread_with::<u16>(&mut col, scroll::LE)?);
+            }
+
+            self.fix_reloc_addr(va, blocks, image_addr, base)?;
+
+            if bytes_len <= col { break; }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn fix_reloc_addr(&self, va: u32, blocks: Vec<u16>, image_addr: u64, base: u64) -> Result<(), Box<dyn Error>> {
+        let delta: i32 = image_addr as i32 - base as i32;
+        for block in &blocks {
+            let ty = (*block & 0xf000) >> 12;
+            let real = *block & 0xfff;
+            if ty == 0 { continue; }
+            let rva = va + real as u32;
+
+            let old = self.emu.mem_read_as_vec(image_addr + rva as u64, 4)?;
+            let old:u32 = old.pread(0)?;
+
+            let new = (old as i32 + delta) as u32;
+            self.emu.mem_write(image_addr + rva as u64, &new.to_le_bytes())?;
+        }
+
+        Ok(())
     }
 
     #[inline]
