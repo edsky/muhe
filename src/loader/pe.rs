@@ -17,6 +17,8 @@ use crate::windows::structs::{PebLoaderData32, WinUnicodeSting32, PebLdrTableEnt
 use std::borrow::Borrow;
 use crate::windows::segmentation::{SegmentDescriptor, Ring};
 use scroll::{Pread, Pwrite};
+use crate::windows::api_set;
+use widestring::WideString;
 
 const FS_SEGMENT_ADDR: u32 = 0x6000;
 const FS_SEGMENT_SIZE: u32 = 0x6000;
@@ -35,6 +37,7 @@ pub struct PeLoader<'a> {
     dll_last_addr: Cell<u64>,           // dll module last address
     dll_mmap: RefCell<BiMap<String, u32>>,// dll映射表, 名称 <-> 基地址
     dll_imports: RefCell<HashMap<String, HashMap<String, u32>>>,   // 导入表, 名称 <-> [函数名 <-> 地址]
+    dll_api_sets: RefCell<HashMap<String, Vec<String>>>,    // api sets
 }
 
 #[repr(C)]
@@ -99,7 +102,8 @@ impl<'a> PeLoader<'a>
             dll_mmap: RefCell::new(BiMap::new()),
             ldr_data_map,
             ldr_list: RefCell::new(vec![]),
-            dll_imports: RefCell::new(HashMap::new())
+            dll_imports: RefCell::new(HashMap::new()),
+            dll_api_sets: RefCell::new(HashMap::new()),
         };
         // - init exports
         for _ in &pe.exports {
@@ -170,7 +174,11 @@ impl<'a> PeLoader<'a>
             let dll_name = import.to_lowercase();
 
             if dll_name.starts_with("api-") {
-                // println!("[-] dll load ignore {}", dll_name);
+                if let Some(dlls) = self.dll_api_sets.borrow().get(&dll_name[..dll_name.len()-5]) {
+                    for dll in dlls {
+                        self.load_dll(dll, true)?;
+                    }
+                }
             } else {
                 self.load_dll(&dll_name, true)?;
             }
@@ -198,10 +206,16 @@ impl<'a> PeLoader<'a>
             } else {
                 // Import replacement api
                 if target_dll.starts_with("api-") {
-                    for (_, v) in imports.iter() {
-                        if let Some(addr) = v.get(&*import.name) {
-                            self.emu.mem_write(target_addr, as_u8_slice(addr))?;
-                            break;
+
+                    if let Some(dlls) = self.dll_api_sets.borrow().get(&target_dll[..target_dll.len()-5]) {
+                        for dll in dlls {
+                            // println!("wann {} ===> {}", dll, )
+                            if let Some(m) = imports.get(dll) {
+                                if let Some(addr) = m.get(&*import.name) {
+                                    self.emu.mem_write(target_addr, as_u8_slice(addr))?;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -319,8 +333,42 @@ impl<'a> PeLoader<'a>
     }
 
     #[inline]
+    fn read_unicode(data: &[u8], offset: usize, length: usize) -> Result<String, Box<dyn Error>> {
+        let vec: Vec<u16> = data[offset..offset+length]
+            .chunks_exact(2)
+            .into_iter()
+            .map(|a| u16::from_ne_bytes([a[0], a[1]]))
+            .collect();
+        Ok(WideString::from_vec(vec).to_string_lossy())
+    }
+
+    #[inline]
     fn init_api_map(&self, data: &[u8]) -> Result<(), Box<dyn Error>> {
-        // TODO: save to map
+        let api: api_set::ApiSetNamespace = data.pread(0)?;
+        let mut last_entry_offset = api.entry_offset as usize;
+
+        let mut api_sets = self.dll_api_sets.borrow_mut();
+
+        for _ in 0..api.count {
+            let entry: api_set::ApiSetNamespaceEntry = data.pread(last_entry_offset)?;
+            last_entry_offset += ::std::mem::size_of::<api_set::ApiSetNamespaceEntry>();
+            let origin = Self::read_unicode(data, entry.name_offset as usize, entry.name_length as usize)?;
+            let mut last_value_offset = entry.value_offset as usize;
+
+            let mut vec: Vec<String> = Vec::new();
+            for _ in 0..entry.value_count {
+                let value: api_set::ApiSetValueEntry = data.pread(last_value_offset)?;
+                last_value_offset += ::std::mem::size_of::<api_set::ApiSetValueEntry>();
+
+                let value_str = Self::read_unicode(data, value.value_offset as usize, value.value_length as usize)?;
+                // let name_str = Self::read_unicode(data, value.name_offset as usize, value.name_length as usize)?;
+
+                if !value_str.is_empty() {
+                    vec.push(value_str.to_lowercase());
+                }
+            }
+            api_sets.insert(origin[0..origin.len()-1].to_lowercase(), vec);
+        }
         Ok(())
     }
 }
