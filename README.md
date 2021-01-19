@@ -9,7 +9,7 @@ Simulate loading and running programs.
 - [x] Implement dll reloc
 - [ ] Implement the test framework
 - [ ] Implement the debugger
-- [ ] Implement weird dll redirection mechanism
+- [x] Implement weird dll redirection mechanism
 - [ ] Implement wow64 syscall forwarding
 
 ### Installation
