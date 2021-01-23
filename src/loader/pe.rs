@@ -151,7 +151,7 @@ impl<'a> PeLoader<'a>
             }
         }
         let base_addr = self.get_dll_of_last_addr();
-        println!("[+] Loading {} to 0x{:x}", path, base_addr);
+        println!("[+] Loading {} to 0x{:x}", dll_name, base_addr);
         // Add dll to IAT
         let data = &load_file(&path)?[..];
         let pe = PE::parse(data)?;

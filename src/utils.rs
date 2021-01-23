@@ -20,8 +20,13 @@ pub fn as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 #[inline]
 pub fn load_file(path: &str) -> Result<Mmap, Box<dyn Error>>
 {
-    let file = File::open(path)?;
-    Ok( unsafe { MmapOptions::new().map(&file)? } )
+    let file = File::open(path);
+
+    if file.is_err() {
+        println!("File does not exist: {}", path);
+    }
+    let file = file?;
+    Ok( unsafe { MmapOptions::new().map(&file)? })
 }
 
 /*
