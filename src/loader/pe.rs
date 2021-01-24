@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use unicorn::{Protection, CpuX86, RegisterX86, Cpu};
+use unicorn::{Protection, CpuX86, RegisterX86, Cpu, InsnSysX86};
 use goblin::pe::PE;
 use crate::heap::Heap;
 use crate::utils::{as_u8_slice, load_file};
@@ -116,6 +116,9 @@ impl<'a> PeLoader<'a>
         // add pe to ldr_data_table
         loader.insert_to_dlls(file, image_address as u32)?;
         // add ntdll to ldr_data_table
+        let last_dll_addr = loader.get_dll_of_last_addr();
+        loader.emu.mem_map(last_dll_addr as u64, 0x9000, Protection::EXEC)?;
+        loader.set_dll_of_last_addr(last_dll_addr + 0x9000);
         loader.load_dll("ntdll.dll", true)?;
         // import dll
         for lib in &pe.libraries {
@@ -127,6 +130,15 @@ impl<'a> PeLoader<'a>
         // init segmentation
         loader.init_gdtr(FS_SEGMENT_ADDR)?;
 
+        // wow64
+        let wow64 = loader.ntdll_GetProcAddress(loader.ntdll_LoadLibrary("ntdll.dll"), "Wow64Transition") as u64;
+        let wow64_syscall_addr = last_dll_addr + 0x6000;
+        loader.emu.mem_write(wow64, &wow64_syscall_addr.to_le_bytes())?;
+        loader.emu.mem_write(wow64_syscall_addr as u64, &vec![0x0f, 0x05, 0xc3])?;
+
+        loader.emu.add_insn_sys_hook(InsnSysX86::SYSCALL, wow64_syscall_addr as u64, (wow64_syscall_addr + 2) as u64, |_uc| {
+            // TODO: call to api
+        } )?;
         Ok(loader)
     }
 
