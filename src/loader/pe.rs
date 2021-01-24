@@ -182,6 +182,7 @@ impl<'a> PeLoader<'a>
             let mut exports_r: HashMap<u32, String> = HashMap::new();
             for export in &pe.exports {
                 if let Some(name) = export.name {
+                    // println!("[+] inject {} to {:x} on {}  --- {:?}", name, base_addr + export.rva as u32, dll_name, export);
                     exports_l.insert(name.to_owned(), base_addr + export.rva as u32);
                     exports_r.insert(base_addr + export.rva as u32, name.to_owned());
                 }
@@ -415,10 +416,22 @@ impl<'a> PeLoader<'a>
             None
         };
         // name
+        // let exports = self.dll_exports.borrow();
+        // let exports = exports.get("ntdll.dll").unwrap();
+        // let name = exports.get(&(return_addr - 0x0c)).unwrap();
 
+        let mut ret: u32 = 0;
 
-        println!(">>> call to {} return {:x} arg num is {}", eax, return_addr, arg_nums.unwrap() / 4);
+        match eax {
+            0x23 => {
+                // ZwQueryVirtualMemory
+            },
+            _ => {
+                println!(">>> Call unimplemented syscall {:x}", eax);
+            }
+        }
 
+        uc.reg_write(RegisterX86::EAX.to_i32(), ret as u64)?;
         Ok(())
     }
 }
