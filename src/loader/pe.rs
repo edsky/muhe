@@ -37,7 +37,8 @@ pub struct PeLoader<'a> {
     ldr_list: RefCell<Vec<PebLdrTableEntry32Map>>,// peb table
     dll_last_addr: Cell<u64>,           // dll module last address
     dll_mmap: RefCell<BiMap<String, u32>>,// dll映射表, 名称 <-> 基地址
-    dll_imports: RefCell<HashMap<String, BiMap<String, u32>>>,   // 导入表, 名称 <-> [函数名 <-> 地址]
+    dll_imports: RefCell<HashMap<String, HashMap<String, u32>>>,   // 导入表, 名称 <-> [函数名 <-> 地址]
+    dll_exports: RefCell<HashMap<String, HashMap<u32, String>>>,
     dll_api_sets: RefCell<HashMap<String, Vec<String>>>,    // api sets
 }
 
@@ -104,6 +105,7 @@ impl<'a> PeLoader<'a>
             ldr_data_map,
             ldr_list: RefCell::new(vec![]),
             dll_imports: RefCell::new(HashMap::new()),
+            dll_exports: RefCell::new(HashMap::new()),
             dll_api_sets: RefCell::new(HashMap::new()),
         };
         // - init exports
@@ -175,13 +177,17 @@ impl<'a> PeLoader<'a>
         // Export
         {
             let mut imports = self.dll_imports.borrow_mut();
-            let mut exports:BiMap<String, u32> = BiMap::new();
+            let mut exports = self.dll_exports.borrow_mut();
+            let mut exports_l:HashMap<String, u32> = HashMap::new();
+            let mut exports_r: HashMap<u32, String> = HashMap::new();
             for export in &pe.exports {
                 if let Some(name) = export.name {
-                    exports.insert(name.to_owned(), base_addr + export.rva as u32);
+                    exports_l.insert(name.to_owned(), base_addr + export.rva as u32);
+                    exports_r.insert(base_addr + export.rva as u32, name.to_owned());
                 }
             }
-            imports.insert(dll_name.to_owned(), exports);
+            imports.insert(dll_name.to_owned(), exports_l);
+            exports.insert(dll_name.to_owned(), exports_r);
         }
         self.insert_to_dlls(dll_name, base_addr)?;
 
@@ -211,31 +217,35 @@ impl<'a> PeLoader<'a>
     {
         let imports = self.dll_imports.borrow();
         for import in &pe.imports {
+            let import_name = import.name.as_ref().to_owned();
             let target_addr = base_addr + import.offset as u64;
             let target_dll = &import.dll.to_lowercase();
             if let Some(m) = imports.get(target_dll) {
-                if let Some(addr) = m.get_by_left(&import.name.as_ref().to_owned()) {
+                if let Some(addr) = m.get(&import_name) {
                     self.emu.mem_write(target_addr, as_u8_slice(addr))?;
                 } else {
-                    // println!("[-] Not found {} on {} ===> {:08x}", import.name, import.dll.to_lowercase(), target_addr);
+                    println!("[-] Not found {} on {} ===> {:08x}", import.name, import.dll.to_lowercase(), target_addr);
                 }
             } else {
                 // Import replacement api
                 if target_dll.starts_with("api-") {
-
+                    let mut found = false;
                     if let Some(dlls) = self.dll_api_sets.borrow().get(&target_dll[..target_dll.len()-5]) {
                         for dll in dlls {
                             // println!("wann {} ===> {}", dll, )
                             if let Some(m) = imports.get(dll) {
-                                if let Some(addr) = m.get_by_left(&import.name.as_ref().to_owned()) {
+                                if let Some(addr) = m.get(&import_name) {
+                                    found = true;
                                     self.emu.mem_write(target_addr, as_u8_slice(addr))?;
                                     break;
                                 }
                             }
                         }
                     }
+                    if !found {
+                        println!("[-] Not found module {} for {} ===> {:08x}", import.dll.to_lowercase(), import.name, target_addr);
+                    }
                 }
-                // println!("[-] Not found module {} for {} ===> {:08x}", import.dll.to_lowercase(), import.name, target_addr);
             }
         }
 
@@ -261,7 +271,7 @@ impl<'a> PeLoader<'a>
 
         if let Some(dll_name) = name {
             let imports = self.dll_imports.borrow();
-            *imports.get(&dll_name).unwrap().get_by_left(&proc_name.to_owned()).unwrap_or(&(0 as u32))
+            *imports.get(&dll_name).unwrap().get(&proc_name.to_owned()).unwrap_or(&(0 as u32))
         } else {
             0
         }
