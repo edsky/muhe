@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use unicorn::{Protection, CpuX86, RegisterX86, Cpu, InsnSysX86};
+use unicorn::{Protection, CpuX86, RegisterX86, Cpu, InsnSysX86, Register, Unicorn};
 use goblin::pe::PE;
 use crate::heap::Heap;
 use crate::utils::{as_u8_slice, load_file};
@@ -19,6 +19,7 @@ use crate::windows::segmentation::{SegmentDescriptor, Ring};
 use scroll::{Pread, Pwrite};
 use crate::windows::api_set;
 use widestring::WideString;
+use std::sync::Arc;
 
 const FS_SEGMENT_ADDR: u32 = 0x6000;
 const FS_SEGMENT_SIZE: u32 = 0x6000;
@@ -36,7 +37,7 @@ pub struct PeLoader<'a> {
     ldr_list: RefCell<Vec<PebLdrTableEntry32Map>>,// peb table
     dll_last_addr: Cell<u64>,           // dll module last address
     dll_mmap: RefCell<BiMap<String, u32>>,// dll映射表, 名称 <-> 基地址
-    dll_imports: RefCell<HashMap<String, HashMap<String, u32>>>,   // 导入表, 名称 <-> [函数名 <-> 地址]
+    dll_imports: RefCell<HashMap<String, BiMap<String, u32>>>,   // 导入表, 名称 <-> [函数名 <-> 地址]
     dll_api_sets: RefCell<HashMap<String, Vec<String>>>,    // api sets
 }
 
@@ -52,7 +53,7 @@ struct X86Mmr
 
 impl<'a> PeLoader<'a>
 {
-    pub fn new(file: &str) -> Result<PeLoader, Box<dyn Error>> {
+    pub fn new(file: &str) -> Result<Arc<PeLoader>, Box<dyn Error>> {
         let emu = Box::new(CpuX86::new(unicorn::Mode::MODE_32)?);
         let heap = Box::new(Heap::new(0x5000000, 0x5000000 + 0x5000000));
         // alloc
@@ -136,9 +137,12 @@ impl<'a> PeLoader<'a>
         loader.emu.mem_write(wow64, &wow64_syscall_addr.to_le_bytes())?;
         loader.emu.mem_write(wow64_syscall_addr as u64, &vec![0x0f, 0x05, 0xc3])?;
 
-        loader.emu.add_insn_sys_hook(InsnSysX86::SYSCALL, wow64_syscall_addr as u64, (wow64_syscall_addr + 2) as u64, |_uc| {
-            // TODO: call to api
+        let loader = Arc::new(loader);
+        let loader_clone = loader.clone();
+        loader.emu.add_insn_sys_hook(InsnSysX86::SYSCALL, wow64_syscall_addr as u64, (wow64_syscall_addr + 2) as u64, move |uc| {
+            loader_clone.syscall(uc).unwrap();
         } )?;
+
         Ok(loader)
     }
 
@@ -171,7 +175,7 @@ impl<'a> PeLoader<'a>
         // Export
         {
             let mut imports = self.dll_imports.borrow_mut();
-            let mut exports:HashMap<String, u32> = HashMap::new();
+            let mut exports:BiMap<String, u32> = BiMap::new();
             for export in &pe.exports {
                 if let Some(name) = export.name {
                     exports.insert(name.to_owned(), base_addr + export.rva as u32);
@@ -210,7 +214,7 @@ impl<'a> PeLoader<'a>
             let target_addr = base_addr + import.offset as u64;
             let target_dll = &import.dll.to_lowercase();
             if let Some(m) = imports.get(target_dll) {
-                if let Some(addr) = m.get(&*import.name) {
+                if let Some(addr) = m.get_by_left(&import.name.as_ref().to_owned()) {
                     self.emu.mem_write(target_addr, as_u8_slice(addr))?;
                 } else {
                     // println!("[-] Not found {} on {} ===> {:08x}", import.name, import.dll.to_lowercase(), target_addr);
@@ -223,7 +227,7 @@ impl<'a> PeLoader<'a>
                         for dll in dlls {
                             // println!("wann {} ===> {}", dll, )
                             if let Some(m) = imports.get(dll) {
-                                if let Some(addr) = m.get(&*import.name) {
+                                if let Some(addr) = m.get_by_left(&import.name.as_ref().to_owned()) {
                                     self.emu.mem_write(target_addr, as_u8_slice(addr))?;
                                     break;
                                 }
@@ -257,7 +261,7 @@ impl<'a> PeLoader<'a>
 
         if let Some(dll_name) = name {
             let imports = self.dll_imports.borrow();
-            *imports.get(&dll_name).unwrap().get(proc_name).unwrap_or(&(0 as u32))
+            *imports.get(&dll_name).unwrap().get_by_left(&proc_name.to_owned()).unwrap_or(&(0 as u32))
         } else {
             0
         }
@@ -381,6 +385,30 @@ impl<'a> PeLoader<'a>
             }
             api_sets.insert(origin[0..origin.len()-1].to_lowercase(), vec);
         }
+        Ok(())
+    }
+
+    fn syscall(&self, uc: &Unicorn) -> Result<(), Box<dyn Error>>  {
+        let esp = uc.reg_read(RegisterX86::ESP.to_i32())?;
+        let eax = uc.reg_read_i32(RegisterX86::EAX.to_i32())?;
+
+        // read stack
+        let stack = uc.mem_read_as_vec(esp,  0x100)?;
+
+        // return addr
+        let return_addr: u32 = stack.pread(0)?;
+        // ret
+        let ret_n = uc.mem_read_as_vec(return_addr as u64, 3)?;
+        let arg_nums:Option<u16> = if ret_n[0] == 0xc2 {
+            Some(ret_n.pread(1)?)
+        } else {
+            None
+        };
+        // name
+
+
+        println!(">>> call to {} return {:x} arg num is {}", eax, return_addr, arg_nums.unwrap() / 4);
+
         Ok(())
     }
 }
