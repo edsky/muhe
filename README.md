@@ -11,6 +11,7 @@ Simulate loading and running programs.
 - [ ] Implement the debugger
 - [x] Implement weird dll redirection mechanism
 - [ ] Implement wow64 syscall forwarding
+- [ ] Implement kuser_shared_data
 
 ### Installation
 
